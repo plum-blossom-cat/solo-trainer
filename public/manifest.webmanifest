@@ -1,0 +1,14 @@
+{
+  "name": "Solo Trainer — The System",
+  "short_name": "The System",
+  "description": "A Solo Leveling themed fitness quest system with AI rep detection.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#02040b",
+  "theme_color": "#02040b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

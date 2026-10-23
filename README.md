@@ -1,0 +1,65 @@
+# Solo Trainer — *The System*
+
+A Solo Leveling themed fitness app. You get daily quests, AI rep detection, Gates to clear, shadow soldiers to extract and level-ups, all wrapped in glowing blue System windows.
+
+> *"You have acquired the qualifications to be a Player. Will you accept?"*
+
+## Features
+
+| | |
+|---|---|
+| **Awakening** | A typed System intro (the "decline" option is not really an option), player registration and Daily Quest calibration. |
+| **Status window** | Level, rank (E → D → C → B → A → S → National), job, title, HP / MP / fatigue bars, and the five stats STR, AGI, VIT, INT and PER. You spend ability points on stats. |
+| **Daily Quest** | *Preparations to become powerful*: push-ups, sit-ups, squats and a run, with a countdown to midnight. Difficulty is Beginner, Normal, Hunter (the original 100/100/100/10 km) or Custom, and can optionally scale with level. Rewards are full recovery, +3 ability points, XP, gold and a Random Box. |
+| **Penalty Zone** | Miss a daily quest and the next launch drops you into a desert full of giant centipedes. A timed survival workout must be completed before the app unlocks. Holy Water of Life protects you once. |
+| **Emergency Quests** | Surprise timed challenges arrive about every other day. Failing one costs HP. |
+| **AI rep detection** | MediaPipe pose tracking runs **on-device** and counts push-ups, squats, sit-ups and jumping jacks, and times planks. It shows a glowing skeleton overlay, a depth gauge and form feedback ("Go lower", "Hips too high"). Half reps don't count. |
+| **Motion sensor mode** | Counts squats and jumping jacks from the phone's accelerometer. |
+| **GPS run tracker** | Distance, pace and time, with filtering for GPS noise and teleport jumps. A screen wake lock keeps it running, and there is a manual/treadmill entry. |
+| **Meditation** | A breathing guide that trains INT. |
+| **Gates** | 11 dungeons from E-rank to National-level, plus key-only Instant Dungeons. Every rep deals damage, so STR increases damage and AGI increases crit chance. Bosses enrage on a timer. |
+| **Job Change** | At Level 8, the Hall of Knights secret quest turns you into a Necromancer. |
+| **Shadow Extraction** | **ARISE.** You extract defeated bosses (Igris, Tank, Iron, Tusk, Kaisel, Beru, Bellion and more) into your Shadow Army. Each shadow grants passive bonuses. |
+| **Skills & Titles** | 11 skills unlock by level. 11 titles come from achievements, and you equip one for its bonus. |
+| **Inventory & Shop** | Potions, Random Boxes, dungeon keys, Holy Water, Venom Fangs and Rune Stones. |
+| **Records** | Lifetime totals, a 14-day chart (with a table view) and a 12-week activity heatmap. |
+| **Feel** | Synthesised System sounds (WebAudio, no audio files), an optional spoken System voice, level-up, rank-up and job-change cinematics, and particle backgrounds. All character art is original SVG. |
+| **PWA** | Installable and works offline. Progress is saved on-device with JSON export and import. |
+
+## Getting started
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # engine + rep-counter tests
+npm run build      # production build in dist/
+```
+
+The camera and motion sensors need a **secure context**: `localhost` works, and anything else must be HTTPS. To test on a phone, deploy `dist/` to any static HTTPS host (GitHub Pages, Netlify, Vercel). The build uses relative paths, so it works from a sub-folder.
+
+### Camera tips
+
+- **Push-ups, sit-ups, plank:** put the phone on the floor about 2 m away, side-on, with your whole body in frame.
+- **Squats:** side-on or facing the camera, with hips, knees and ankles visible.
+- **Jumping jacks:** face the camera with your arms and feet in frame.
+
+The pose model (`pose_landmarker_lite`) is downloaded from Google's MediaPipe model storage on first use and then cached. The WASM runtime is served from this app (`public/mediapipe`, copied from `node_modules` by `scripts/copy-mediapipe.mjs`). Video never leaves the device.
+
+## Project layout
+
+```
+src/
+  game/        pure game rules (engine.ts), content (data.ts), zustand store
+  detection/   pose geometry, rep-counter state machines, motion & GPS trackers
+  art/         original SVG silhouettes for the hunter, monsters and shadows
+  audio/       synthesised sound effects and System voice
+  components/  System windows, bars, overlays, toasts, training session panels
+  screens/     Awakening, Status, Quests, Train, Gates, Battle, Extraction,
+               Shadows, Inventory, Records, Settings, Penalty Zone
+```
+
+The engine is pure: every action takes the player state and returns the new state plus events. That makes the rules easy to test (`src/__tests__`).
+
+---
+
+Fan-made and not affiliated with the Solo Leveling creators or publishers. Train within your limits.
