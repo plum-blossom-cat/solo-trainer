@@ -319,6 +319,17 @@ const ARTS: Record<FigureArt, ArtDef> = {
   },
 }
 
+/**
+ * Raster art dropped into src/art/images/<art>.(png|webp|jpg) replaces the
+ * matching silhouette automatically. Only use art you have the rights to,
+ * and record it in CREDITS.md.
+ */
+const IMAGES: Partial<Record<FigureArt, string>> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob<string>('./images/*.{png,webp,jpg,jpeg}', { eager: true, query: '?url', import: 'default' }),
+  ).map(([path, url]) => [path.replace(/^.*\/|\.\w+$/g, ''), url]),
+)
+
 export interface FigureProps {
   art: FigureArt
   variant?: 'enemy' | 'shadow' | 'hunter'
@@ -354,6 +365,29 @@ export function Figure({ art, variant = 'enemy', aura, size = 200, animate = tru
         }}
       />
       {variant === 'shadow' && <Smoke color={auraColor} />}
+      {IMAGES[art] ? (
+        <img
+          src={IMAGES[art]}
+          alt=""
+          aria-hidden
+          draggable={false}
+          style={{
+            position: 'relative',
+            width: size,
+            height: size * 1.2,
+            objectFit: 'contain',
+            objectPosition: 'bottom',
+            transform: flip ? 'scaleX(-1)' : undefined,
+            // Shadows are the same creature reborn: darkened and tinted by their aura.
+            filter: [
+              variant === 'shadow' ? 'brightness(0.55) sepia(1) hue-rotate(220deg) saturate(2.5)' : '',
+              `drop-shadow(0 0 ${variant === 'enemy' ? 6 : 10}px ${auraColor})`,
+              hurt ? 'brightness(2.2)' : '',
+            ].join(' '),
+            transition: 'filter 0.12s',
+          }}
+        />
+      ) : (
       <svg
         viewBox="0 0 200 240"
         width={size}
@@ -405,6 +439,7 @@ export function Figure({ art, variant = 'enemy', aura, size = 200, animate = tru
           </g>
         ))}
       </svg>
+      )}
     </motion.div>
   )
 }
