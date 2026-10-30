@@ -42,3 +42,13 @@ export function formatClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
+
+/** 0 = Sunday … 6 = Saturday. */
+export function weekday(key: string): number {
+  return parseDayKey(key).getDay()
+}
+
+/** Monday of the week containing `key`. */
+export function weekStart(key: string): string {
+  return addDays(key, -((weekday(key) + 6) % 7))
+}

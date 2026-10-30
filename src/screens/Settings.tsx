@@ -3,7 +3,7 @@ import { SystemWindow, Toggle } from '../components/ui'
 import { DAILY_PRESETS, formatAmount } from '../game/data'
 import { dailyTargets } from '../game/engine'
 import { usePlayer, useStore } from '../game/store'
-import type { DailyTargets, Difficulty, Settings as SettingsT } from '../game/types'
+import type { DailyTargets, Difficulty } from '../game/types'
 
 const DIFFS: { value: Difficulty; label: string }[] = [
   { value: 'beginner', label: 'Beginner' },
@@ -25,7 +25,7 @@ export function Settings() {
   const fileRef = useRef<HTMLInputElement>(null)
   const targets = dailyTargets(data)
 
-  const toggles: { key: keyof SettingsT; label: string; hint: string }[] = [
+  const toggles: { key: 'sound' | 'voice' | 'showSkeleton' | 'reduceMotion'; label: string; hint: string }[] = [
     { key: 'sound', label: 'Sound effects', hint: 'System chimes, hits and level-up fanfare' },
     { key: 'voice', label: 'System voice', hint: 'Spoken announcements via speech synthesis' },
     { key: 'showSkeleton', label: 'Show pose skeleton', hint: 'Draw tracked joints over the camera feed' },
@@ -33,9 +33,36 @@ export function Settings() {
   ]
 
   const setCustom = (k: keyof DailyTargets, v: string) => {
-    const n = Math.max(1, Math.min(k === 'run' ? 50000 : 1000, Math.round(Number(v) || 0)))
-    updateQuestConfig({ customTargets: { ...data.customTargets, [k]: n } })
+    const n = Math.max(0, Math.min(k === 'run' ? 50000 : 1000, Math.round(Number(v) || 0)))
+    const next = { ...data.customTargets, [k]: n }
+    if (Object.values(next).every((x) => x === 0)) {
+      notify({ title: 'The Daily Quest needs at least one exercise', tone: 'warn' })
+      return
+    }
+    updateQuestConfig({ customTargets: next })
   }
+
+  const toggleRestDay = (d: number) => {
+    const on = data.settings.restDays.includes(d)
+    if (!on && data.settings.restDays.length >= 3) {
+      notify({ title: 'At most 3 rest days per week', tone: 'warn' })
+      return
+    }
+    updateSettings({ restDays: on ? data.settings.restDays.filter((x) => x !== d) : [...data.settings.restDays, d].sort() })
+  }
+
+  const setReminder = async (enabled: boolean) => {
+    if (enabled && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission()
+      } catch {
+        // Permission prompts can be blocked; the in-app reminder still works.
+      }
+    }
+    updateSettings({ reminderEnabled: enabled })
+  }
+
+  const notificationsBlocked = 'Notification' in window && Notification.permission === 'denied'
 
   const exportSave = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -110,11 +137,69 @@ export function Settings() {
           <Toggle label="Scale with level" on={data.scaleWithLevel} onChange={(v) => updateQuestConfig({ scaleWithLevel: v })} />
         </div>
         <div className="small" style={{ marginTop: 12, color: 'var(--cyan)' }}>
-          Current: {targets.pushup} push-ups · {targets.situp} sit-ups · {targets.squat} squats · {formatAmount('run', targets.run)}
+          Current:{' '}
+          {[
+            targets.pushup && `${targets.pushup} push-ups`,
+            targets.situp && `${targets.situp} sit-ups`,
+            targets.squat && `${targets.squat} squats`,
+            targets.run && formatAmount('run', targets.run),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </div>
         <div className="small dim" style={{ marginTop: 4 }}>
-          Changes apply to today's quest immediately. Gate waves scale with difficulty too.
+          Changes apply to today's quest immediately. In Custom, set a target to 0 to drop that exercise.
         </div>
+
+        <div className="divider" />
+        <div style={{ fontWeight: 600 }}>Rest days</div>
+        <div className="small muted" style={{ marginBottom: 8 }}>
+          No mandatory quest and no penalty on these days. Streaks carry over them.
+        </div>
+        <div className="seg">
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, d) => (
+            <button
+              key={d}
+              className={data.settings.restDays.includes(d) ? 'on' : ''}
+              aria-pressed={data.settings.restDays.includes(d)}
+              aria-label={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d]}
+              onClick={() => toggleRestDay(d)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="divider" />
+        <div className="row between">
+          <div>
+            <div style={{ fontWeight: 600 }}>Daily reminder</div>
+            <div className="small muted">A System notice if today's quest is still open</div>
+          </div>
+          <Toggle label="Daily reminder" on={data.settings.reminderEnabled} onChange={(v) => void setReminder(v)} />
+        </div>
+        {data.settings.reminderEnabled && (
+          <div className="row" style={{ marginTop: 10 }}>
+            <label htmlFor="reminder-time" className="small muted caps">
+              Time
+            </label>
+            <input
+              id="reminder-time"
+              type="time"
+              className="input"
+              style={{ maxWidth: 140 }}
+              value={data.settings.reminderTime}
+              onChange={(e) => e.target.value && updateSettings({ reminderTime: e.target.value })}
+            />
+          </div>
+        )}
+        {data.settings.reminderEnabled && (
+          <div className="small dim" style={{ marginTop: 6 }}>
+            {notificationsBlocked
+              ? 'Notifications are blocked in your browser, so the reminder appears inside the app only.'
+              : 'Shown while the app is open or running in the background. Install the app for the most reliable reminders.'}
+          </div>
+        )}
       </SystemWindow>
 
       <SystemWindow title="System" bang={false}>

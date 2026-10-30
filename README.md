@@ -10,8 +10,11 @@ A Solo Leveling themed fitness app. You get daily quests, AI rep detection, Gate
 |---|---|
 | **Awakening** | A typed System intro (the "decline" option is not really an option), player registration and Daily Quest calibration. |
 | **Status window** | Level, rank (E → D → C → B → A → S → National), job, title, HP / MP / fatigue bars, and the five stats STR, AGI, VIT, INT and PER. You spend ability points on stats. |
-| **Daily Quest** | *Preparations to become powerful*: push-ups, sit-ups, squats and a run, with a countdown to midnight. Difficulty is Beginner, Normal, Hunter (the original 100/100/100/10 km) or Custom, and can optionally scale with level. Rewards are full recovery, +3 ability points, XP, gold and a Random Box. |
+| **Daily Quest** | *Preparations to become powerful*: push-ups, sit-ups, squats and a run, with a countdown to midnight. Difficulty is Beginner, Normal, Hunter (the original 100/100/100/10 km) or Custom (set any target to 0 to drop that exercise), and can optionally scale with level. Rewards are full recovery, +3 ability points, XP, gold and a Random Box. |
 | **Penalty Zone** | Miss a daily quest and the next launch drops you into a desert full of giant centipedes. A timed survival workout must be completed before the app unlocks. Holy Water of Life protects you once. |
+| **Weekly Quest** | Clear the Daily Quest on 5 days and hit jumping-jack and plank goals for XP, gold and a dungeon key. It resets every Monday. |
+| **Rest days & reminders** | Pick up to 3 rest days a week. They carry no penalty and don't break your streak. An optional daily reminder fires (as a phone notification if allowed) when your quest is still open. |
+| **Fitness tracking** | Every session is logged in a workout history, and you can remove one if it was recorded by mistake. It also tracks personal records (best session and best day), calorie estimates scaled to your body weight, and body weight with a trend chart and BMI. The training screen has a rest timer between sets. |
 | **Emergency Quests** | Surprise timed challenges arrive about every other day. Failing one costs HP. |
 | **AI rep detection** | MediaPipe pose tracking runs **on-device** and counts push-ups, squats, sit-ups and jumping jacks, and times planks. It shows a glowing skeleton overlay, a depth gauge and form feedback ("Go lower", "Hips too high"). Half reps don't count. |
 | **Motion sensor mode** | Counts squats and jumping jacks from the phone's accelerometer. |

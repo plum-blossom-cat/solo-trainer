@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { setSoundEnabled, setVoiceEnabled, sfx, speak } from '../audio/sfx'
 import { EXERCISES, ITEMS, STATS, TITLES, type DungeonDef } from './data'
+import { dayKey } from './date'
 import * as engine from './engine'
 import type { Result, SystemEvent } from './engine'
 import type { Difficulty, ExerciseId, ItemId, PlayerData, Settings, ShadowId, StatKey } from './types'
@@ -70,6 +71,11 @@ interface Store {
   clearPenalty(): void
   updateSettings(s: Partial<Settings>): void
   updateQuestConfig(c: Partial<Pick<PlayerData, 'difficulty' | 'customTargets' | 'scaleWithLevel' | 'name'>>): void
+  deleteSession(id: string): void
+  claimWeekly(): void
+  logWeight(kg: number): void
+  setHeight(cm: number | null): void
+  markReminded(): void
   importSave(json: string): boolean
   resetAll(): void
   notify(n: Omit<Notice, 'id'>): void
@@ -99,6 +105,34 @@ function save(data: PlayerData | null) {
   }, 150)
 }
 
+/** The reminder fires once a day, after the chosen time, while today's mandatory quest is still open. */
+function reminderDue(d: PlayerData, now = new Date()): boolean {
+  const today = dayKey(now)
+  if (!d.settings.reminderEnabled || d.lastReminderDate === today) return false
+  if (d.daily.completed || d.penalty.active || engine.isRestDay(d, today)) return false
+  const [h, m] = d.settings.reminderTime.split(':').map(Number)
+  return now.getHours() * 60 + now.getMinutes() >= h * 60 + m
+}
+
+function sendReminder(d: PlayerData) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+  const title = 'The System: Daily Quest'
+  const options = { body: `${d.name}, your Daily Quest is not complete. Failure will result in a penalty.`, icon: './icon.svg', tag: 'daily-quest' }
+  // Service-worker notifications work on mobile, where the constructor is unavailable.
+  const fallback = () => {
+    try {
+      new Notification(title, options)
+    } catch {
+      // Some mobile browsers only allow service-worker notifications.
+    }
+  }
+  if (!navigator.serviceWorker) return fallback()
+  navigator.serviceWorker.getRegistration().then((reg) => {
+    if (reg) void reg.showNotification(title, options)
+    else fallback()
+  }, fallback)
+}
+
 let noticeId = 1
 
 function describe(e: SystemEvent): Omit<Notice, 'id'> | null {
@@ -107,6 +141,8 @@ function describe(e: SystemEvent): Omit<Notice, 'id'> | null {
       return { title: `${STATS[e.stat].label} +${e.amount}`, body: `Your ${STATS[e.stat].name} has increased.`, tone: 'reward' }
     case 'dailyComplete':
       return { title: 'Daily Quest Complete', body: 'Preparations to become powerful: cleared. Claim your reward.', tone: 'quest' }
+    case 'weeklyComplete':
+      return { title: 'Weekly Quest Complete', body: 'Rewards: XP, Gold and an Instant Dungeon Key.', tone: 'quest' }
     case 'dailyReward':
       return {
         title: 'Rewards Received',
@@ -263,6 +299,13 @@ export const useStore = create<Store>((set, get) => {
         const e = engine.maybeIssueEmergency(r.data)
         return { data: e.data, events: [...r.events, ...e.events] }
       })
+      const d = get().data
+      if (d && reminderDue(d)) {
+        get().markReminded()
+        sendReminder(d)
+        get().notify({ title: 'Daily Quest reminder', body: "Today's quest is still open. Preparations to become powerful await.", tone: 'alert' })
+        sfx.warning()
+      }
     },
     enterGate(d) {
       const data = get().data
@@ -306,11 +349,28 @@ export const useStore = create<Store>((set, get) => {
         const settings = { ...d.settings, ...s }
         setSoundEnabled(settings.sound)
         setVoiceEnabled(settings.voice)
-        return { ...d, settings }
+        // Rest days change which days are mandatory, so re-check today's quest.
+        return engine.refreshDaily({ ...d, settings })
       })
     },
     updateQuestConfig(c) {
-      withData((d) => ({ ...d, ...c }))
+      // Lowering a target can complete today's quest on the spot.
+      withData((d) => engine.refreshDaily({ ...d, ...c }))
+    },
+    deleteSession(id) {
+      withData((d) => engine.deleteSession(d, id))
+    },
+    claimWeekly() {
+      withData((d) => engine.claimWeekly(d))
+    },
+    logWeight(kg) {
+      withData((d) => engine.logWeight(d, kg))
+    },
+    setHeight(cm) {
+      withData((d) => ({ ...d, body: { ...d.body, heightCm: cm && cm >= 80 && cm <= 260 ? Math.round(cm) : null } }))
+    },
+    markReminded() {
+      withData((d) => ({ ...d, lastReminderDate: dayKey() }))
     },
     importSave(json) {
       try {

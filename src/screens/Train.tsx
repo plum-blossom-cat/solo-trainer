@@ -2,12 +2,13 @@ import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { MeditationPanel } from '../components/session/MeditationPanel'
 import { RepSession } from '../components/session/RepSession'
+import { RestTimer } from '../components/session/RestTimer'
 import { RunTracker } from '../components/session/RunTracker'
 import { Bar, SystemWindow } from '../components/ui'
 import { isCountable } from '../detection/repCounter'
 import { EXERCISES, STATS, formatAmount } from '../game/data'
 import { dayKey } from '../game/date'
-import { dailyTargets } from '../game/engine'
+import { currentWeight, dailyTargets, kcalFor } from '../game/engine'
 import { usePlayer, useStore } from '../game/store'
 import type { ExerciseId } from '../game/types'
 
@@ -129,8 +130,9 @@ export function Train() {
           <div>
             <div className="display" style={{ fontSize: 22, color: 'var(--cyan)' }}>
               +{Math.round(session * def.xpPer)}
+              <span className="small muted"> · ~{Math.round(kcalFor(exercise, session, currentWeight(data) ?? 70))} kcal</span>
             </div>
-            <div className="small muted caps">Base XP</div>
+            <div className="small muted caps">XP · kcal</div>
           </div>
         </div>
 
@@ -168,6 +170,12 @@ export function Train() {
           />
         </div>
       </SystemWindow>
+
+      {isCountable(exercise) && (
+        <SystemWindow title="Rest Timer" bang={false}>
+          <RestTimer />
+        </SystemWindow>
+      )}
     </>
   )
 }

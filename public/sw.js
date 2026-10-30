@@ -1,5 +1,5 @@
 // App-shell cache: network first for pages, cache first for hashed assets.
-const CACHE = 'solo-trainer-v1'
+const CACHE = 'solo-trainer-v2'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './icon.svg', './manifest.webmanifest'])))
@@ -46,5 +46,16 @@ self.addEventListener('fetch', (event) => {
           return res
         }),
     ),
+  )
+})
+
+// Tapping a Daily Quest reminder opens (or focuses) the app.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      const open = list.find((c) => 'focus' in c)
+      return open ? open.focus() : self.clients.openWindow('./')
+    }),
   )
 })

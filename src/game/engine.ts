@@ -18,8 +18,9 @@ import {
   type Bonuses,
   type DungeonDef,
 } from './data'
-import { addDays, dayKey, daysBetween } from './date'
+import { addDays, dayKey, daysBetween, weekStart, weekday } from './date'
 import type {
+  ActivityEntry,
   DailyState,
   DailyTargets,
   DayLog,
@@ -59,6 +60,7 @@ export type SystemEvent =
   | { type: 'jobChange'; job: string }
   | { type: 'extraction'; success: boolean; shadow: string; attemptsLeft: number }
   | { type: 'skill'; name: string }
+  | { type: 'weeklyComplete' }
   | { type: 'message'; text: string; tone?: 'info' | 'warn' | 'good' }
 
 export interface Result {
@@ -153,8 +155,27 @@ export function dailyTargets(data: Pick<PlayerData, 'difficulty' | 'customTarget
   }
 }
 
+export const DAILY_KEYS: (keyof DailyTargets)[] = ['pushup', 'situp', 'squat', 'run']
+
+/** A target of 0 removes that exercise from the Daily Quest. */
 export function isDailyDone(progress: DailyTargets, targets: DailyTargets): boolean {
-  return (Object.keys(targets) as (keyof DailyTargets)[]).every((k) => progress[k] >= targets[k])
+  const active = DAILY_KEYS.filter((k) => targets[k] > 0)
+  return active.length > 0 && active.every((k) => progress[k] >= targets[k])
+}
+
+export function isDailyKey(ex: ExerciseId): ex is keyof DailyTargets {
+  return ex === 'pushup' || ex === 'situp' || ex === 'squat' || ex === 'run'
+}
+
+export function isRestDay(data: Pick<PlayerData, 'settings'>, key: string): boolean {
+  return data.settings.restDays.includes(weekday(key))
+}
+
+/** The most recent day before `key` on which the Daily Quest was mandatory. */
+export function previousQuestDay(data: Pick<PlayerData, 'settings'>, key: string): string {
+  let k = addDays(key, -1)
+  for (let i = 0; i < 7 && isRestDay(data, k); i++) k = addDays(k, -1)
+  return k
 }
 
 /* ---------------------------------------------------------------- setup */
@@ -215,7 +236,19 @@ export function createPlayer(name: string, difficulty: Difficulty, now = Date.no
     lastEmergencyDate: today,
     dungeonClears: {},
     achievements: [],
-    settings: { sound: true, voice: true, reduceMotion: false, showSkeleton: true },
+    settings: {
+      sound: true,
+      voice: true,
+      reduceMotion: false,
+      showSkeleton: true,
+      restDays: [],
+      reminderEnabled: false,
+      reminderTime: '19:00',
+    },
+    history: [],
+    body: { heightCm: null, weights: [] },
+    weekly: { week: weekStart(today), claimed: false },
+    lastReminderDate: null,
   }
   data.hp = maxHp(data)
   data.mp = maxMp(data)
@@ -272,6 +305,35 @@ export function gainXp(data: PlayerData, amount: number, now: number, events: Sy
   }
 }
 
+function completeDaily(data: PlayerData, now: number, events: SystemEvent[]) {
+  const today = dayKey(now)
+  data.daily.completed = true
+  data.daily.streakBefore = { ...data.streak }
+  logFor(data, now).dailyComplete = true
+  events.push({ type: 'dailyComplete' })
+  // Rest days never break a streak: compare with the last mandatory day.
+  const prev = previousQuestDay(data, today)
+  data.streak.current = data.streak.lastDate && data.streak.lastDate >= prev ? data.streak.current + 1 : 1
+  data.streak.lastDate = today
+  data.streak.best = Math.max(data.streak.best, data.streak.current)
+  if (data.difficulty === 'hunter') grantTitle(data, 'ironWill', events)
+}
+
+const SESSION_GAP_MS = 10 * 60_000
+const MAX_HISTORY = 1000
+
+/** Groups consecutive work on one exercise into a single session entry. */
+function recordSession(data: PlayerData, ex: ExerciseId, amount: number, now: number) {
+  const last = data.history[data.history.length - 1]
+  if (last && last.exercise === ex && now - last.end < SESSION_GAP_MS && dayKey(last.start) === dayKey(now)) {
+    last.amount += amount
+    last.end = now
+    return
+  }
+  data.history.push({ id: `${now.toString(36)}-${ex}-${data.history.length}`, exercise: ex, amount, start: now, end: now })
+  if (data.history.length > MAX_HISTORY) data.history.splice(0, data.history.length - MAX_HISTORY)
+}
+
 function checkAchievements(data: PlayerData, events: SystemEvent[]) {
   if (data.streak.best >= 7) grantTitle(data, 'persistent', events)
   if (data.streak.best >= 100) grantTitle(data, 'centurion', events)
@@ -294,22 +356,12 @@ export function logWork(input: PlayerData, ex: ExerciseId, amount: number, now =
   const b = computeBonuses(data)
 
   logFor(data, now)[ex] += amount
+  recordSession(data, ex, amount, now)
 
   // Daily quest progress.
-  if (ex === 'pushup' || ex === 'situp' || ex === 'squat' || ex === 'run') {
-    if (data.daily.date === dayKey(now)) {
-      data.daily.progress[ex] += amount
-      if (!data.daily.completed && isDailyDone(data.daily.progress, dailyTargets(data))) {
-        data.daily.completed = true
-        logFor(data, now).dailyComplete = true
-        events.push({ type: 'dailyComplete' })
-        const yesterday = addDays(dayKey(now), -1)
-        data.streak.current = data.streak.lastDate === yesterday ? data.streak.current + 1 : 1
-        data.streak.lastDate = dayKey(now)
-        data.streak.best = Math.max(data.streak.best, data.streak.current)
-        if (data.difficulty === 'hunter') grantTitle(data, 'ironWill', events)
-      }
-    }
+  if (isDailyKey(ex) && data.daily.date === dayKey(now)) {
+    data.daily.progress[ex] += amount
+    if (!data.daily.completed && isDailyDone(data.daily.progress, dailyTargets(data))) completeDaily(data, now, events)
   }
 
   // XP.
@@ -409,26 +461,205 @@ export function tick(input: PlayerData, now = Date.now()): Result {
     data = clone(data)
     // The awakening day is a grace day: no penalty for a quest you barely had time for.
     const graceDay = data.daily.date === dayKey(data.createdAt)
-    const missed = !data.daily.completed && !graceDay && daysBetween(data.daily.date, today) >= 1
-    if (missed) {
+    const lastWasMandatory = !data.daily.completed && !graceDay && !isRestDay(data, data.daily.date)
+    // Days skipped entirely (the app was never opened) count as missed too, unless they were rest days.
+    let skipped = false
+    const gap = Math.min(8, daysBetween(data.daily.date, today))
+    for (let i = 1; i < gap; i++) if (!isRestDay(data, addDays(data.daily.date, i))) skipped = true
+    if (lastWasMandatory || skipped) {
       if ((data.inventory.holyWater ?? 0) > 0) {
         data.inventory.holyWater! -= 1
-        // The water preserves the streak as if yesterday had been completed.
-        if (data.streak.current > 0) data.streak.lastDate = addDays(today, -1)
+        // The water preserves the streak as if the missed day had been completed.
+        if (data.streak.current > 0) data.streak.lastDate = previousQuestDay(data, today)
         events.push({ type: 'penaltyAverted' })
       } else if (!data.penalty.active) {
         data.penalty = { ...data.penalty, active: true, since: today }
         events.push({ type: 'penalty' })
       }
     }
-    if (data.streak.lastDate && daysBetween(data.streak.lastDate, today) > 1) data.streak.current = 0
+    if (data.streak.lastDate && data.streak.lastDate < previousQuestDay(data, today)) data.streak.current = 0
     data.daily = emptyDaily(today)
     if (data.emergency && data.emergency.status !== 'active' && dayKey(data.emergency.issuedAt) !== today) {
       data.emergency = null
     }
   }
 
+  if (data.weekly.week !== weekStart(today)) {
+    if (data === input) data = clone(data)
+    data.weekly = { week: weekStart(today), claimed: false }
+  }
+
   return { data, events }
+}
+
+/** Re-checks the Daily Quest after its targets change (e.g. a lower difficulty). */
+export function refreshDaily(input: PlayerData, now = Date.now()): Result {
+  const events: SystemEvent[] = []
+  if (input.daily.completed || input.daily.date !== dayKey(now) || !isDailyDone(input.daily.progress, dailyTargets(input))) {
+    return { data: input, events }
+  }
+  const data = clone(input)
+  completeDaily(data, now, events)
+  checkAchievements(data, events)
+  return { data, events }
+}
+
+/** Removes a logged session (a mistaken tap, a bad GPS run) and reverses its effects. */
+export function deleteSession(input: PlayerData, id: string): Result {
+  const index = input.history.findIndex((e) => e.id === id)
+  if (index < 0) return { data: input, events: [] }
+  const data = clone(input)
+  const entry = data.history[index]
+  const key = dayKey(entry.start)
+  const def = EXERCISES[entry.exercise]
+  const log = data.logs[key]
+
+  if (isDailyKey(entry.exercise) && data.daily.date === key) {
+    const progress = { ...data.daily.progress }
+    progress[entry.exercise] = Math.max(0, progress[entry.exercise] - entry.amount)
+    if (data.daily.completed && !isDailyDone(progress, dailyTargets(data))) {
+      if (data.daily.rewardClaimed) {
+        return {
+          data: input,
+          events: [{ type: 'message', text: "Today's Daily Quest rewards were already claimed, so this session can't be removed.", tone: 'warn' }],
+        }
+      }
+      data.daily.completed = false
+      if (data.daily.streakBefore) data.streak = { ...data.daily.streakBefore }
+      if (log) log.dailyComplete = false
+    }
+    data.daily.progress = progress
+  }
+
+  if (log) log[entry.exercise] = Math.max(0, log[entry.exercise] - entry.amount)
+  // Remove the base XP; level-ups and stat points already earned are kept.
+  const xp = entry.amount * def.xpPer
+  data.xp = Math.max(0, data.xp - xp)
+  data.totalXp = Math.max(0, data.totalXp - xp)
+  if (log) log.xp = Math.max(0, log.xp - xp)
+  data.statProgress[def.stat] = Math.max(0, data.statProgress[def.stat] - entry.amount)
+
+  const em = data.emergency
+  if (em && em.status === 'active' && em.exercise === entry.exercise && entry.end >= em.issuedAt) {
+    em.progress = Math.max(0, em.progress - entry.amount)
+  }
+  data.history.splice(index, 1)
+  return { data, events: [{ type: 'message', text: 'Session removed.' }] }
+}
+
+/* --------------------------------------------------------------- weekly */
+
+export interface WeeklyGoal {
+  label: string
+  progress: number
+  target: number
+  exercise?: ExerciseId
+}
+
+const WEEKLY_SCALE: Record<Difficulty, number> = { beginner: 0.5, normal: 1, hunter: 2, custom: 1 }
+
+export function weeklyGoals(data: PlayerData, now = Date.now()): WeeklyGoal[] {
+  const start = weekStart(dayKey(now))
+  const days = Array.from({ length: 7 }, (_, i) => data.logs[addDays(start, i)]).filter(Boolean)
+  const sum = (k: 'jumpingJack' | 'plank') => days.reduce((s, l) => s + l[k], 0)
+  const scale = WEEKLY_SCALE[data.difficulty]
+  return [
+    { label: 'Clear the Daily Quest', progress: days.filter((l) => l.dailyComplete).length, target: Math.min(5, 7 - data.settings.restDays.length) },
+    { label: 'Jumping Jacks', progress: sum('jumpingJack'), target: Math.round(150 * scale), exercise: 'jumpingJack' },
+    { label: 'Plank', progress: sum('plank'), target: Math.round(300 * scale), exercise: 'plank' },
+  ]
+}
+
+export function weeklyReward(data: PlayerData) {
+  return { xp: 300 + data.level * 40, gold: 500 + data.level * 20 }
+}
+
+export function claimWeekly(input: PlayerData, now = Date.now()): Result {
+  const goals = weeklyGoals(input, now)
+  if (input.weekly.claimed || !goals.every((g) => g.progress >= g.target)) return { data: input, events: [] }
+  const data = clone(input)
+  const events: SystemEvent[] = [{ type: 'weeklyComplete' }]
+  const b = computeBonuses(data)
+  const r = weeklyReward(data)
+  data.weekly.claimed = true
+  const gold = Math.round(r.gold * goldMultiplier(data, b))
+  data.gold += gold
+  events.push({ type: 'gold', amount: gold })
+  const xp = Math.round(r.xp * (1 + b.xpPct / 100))
+  events.push({ type: 'xp', amount: xp })
+  gainXp(data, xp, now, events)
+  addItem(data, 'dungeonKey', 1, events)
+  checkAchievements(data, events)
+  return { data, events }
+}
+
+/* ----------------------------------------------------------------- body */
+
+export function logWeight(input: PlayerData, kg: number, now = Date.now()): PlayerData {
+  if (!(kg >= 20 && kg <= 400)) return input
+  const data = clone(input)
+  const date = dayKey(now)
+  const weights = data.body.weights.filter((w) => w.date !== date)
+  weights.push({ date, kg: Math.round(kg * 10) / 10 })
+  weights.sort((a, b) => (a.date < b.date ? -1 : 1))
+  data.body.weights = weights.slice(-730)
+  return data
+}
+
+export function currentWeight(data: Pick<PlayerData, 'body'>): number | null {
+  const w = data.body.weights
+  return w.length ? w[w.length - 1].kg : null
+}
+
+export function bmi(data: Pick<PlayerData, 'body'>): number | null {
+  const kg = currentWeight(data)
+  const h = data.body.heightCm
+  return kg && h ? kg / (h / 100) ** 2 : null
+}
+
+/** Rough calorie estimate. Rep costs are calibrated for a 70 kg adult and scale with body weight. */
+const KCAL_PER_UNIT_70KG: Record<ExerciseId, number> = {
+  pushup: 0.5,
+  situp: 0.35,
+  squat: 0.45,
+  jumpingJack: 0.2,
+  plank: 0.074, // MET 3.8, per second
+  run: 0.0735, // ~1.05 kcal per kg per km, per metre
+  meditation: 0,
+}
+
+export function kcalFor(ex: ExerciseId, amount: number, kg = 70): number {
+  return amount * KCAL_PER_UNIT_70KG[ex] * (kg / 70)
+}
+
+export function dayKcal(log: DayLog | undefined, kg = 70): number {
+  if (!log) return 0
+  return (Object.keys(KCAL_PER_UNIT_70KG) as ExerciseId[]).reduce((s, ex) => s + kcalFor(ex, log[ex], kg), 0)
+}
+
+/* -------------------------------------------------------------- records */
+
+export interface PersonalRecord {
+  exercise: ExerciseId
+  bestDay: { amount: number; date: string } | null
+  bestSession: { amount: number; date: string } | null
+}
+
+export function personalRecords(data: PlayerData): PersonalRecord[] {
+  const list: ExerciseId[] = ['pushup', 'situp', 'squat', 'jumpingJack', 'plank', 'run']
+  return list.map((ex) => {
+    let bestDay: PersonalRecord['bestDay'] = null
+    for (const l of Object.values(data.logs)) if (l[ex] > 0 && (!bestDay || l[ex] > bestDay.amount)) bestDay = { amount: l[ex], date: l.date }
+    let bestSession: PersonalRecord['bestSession'] = null
+    for (const e of data.history) {
+      if (e.exercise === ex && (!bestSession || e.amount > bestSession.amount)) bestSession = { amount: e.amount, date: dayKey(e.start) }
+    }
+    return { exercise: ex, bestDay, bestSession }
+  })
+}
+
+export function sessionsFor(data: PlayerData): ActivityEntry[] {
+  return [...data.history].reverse()
 }
 
 export function maybeIssueEmergency(input: PlayerData, now = Date.now(), rng: Rng = Math.random): Result {
@@ -437,6 +668,7 @@ export function maybeIssueEmergency(input: PlayerData, now = Date.now(), rng: Rn
   const events: SystemEvent[] = []
   if (
     input.penalty.active ||
+    isRestDay(input, today) ||
     input.lastEmergencyDate === today ||
     input.emergency?.status === 'active' ||
     hour < 7 ||
@@ -682,6 +914,9 @@ export function migrate(raw: unknown): PlayerData | null {
     stats: { ...fresh.stats, ...d.stats },
     statProgress: { ...fresh.statProgress, ...d.statProgress },
     settings: { ...fresh.settings, ...d.settings },
+    history: Array.isArray(d.history) ? d.history : [],
+    body: { ...fresh.body, ...d.body },
+    weekly: d.weekly ?? fresh.weekly,
     version: SAVE_VERSION,
   } as PlayerData
   for (const k of STAT_KEYS) if (typeof merged.stats[k] !== 'number') merged.stats[k] = 10

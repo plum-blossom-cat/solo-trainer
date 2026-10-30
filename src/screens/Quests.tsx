@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react'
 import { Bar, SystemWindow } from '../components/ui'
 import { IconCheck } from '../components/icons'
 import { DAILY_BONUS_SCALE, EXERCISES, formatAmount } from '../game/data'
-import { formatCountdown, msUntilMidnight } from '../game/date'
-import { dailyTargets, JOB_CHANGE_LEVEL } from '../game/engine'
+import { dayKey, formatCountdown, msUntilMidnight } from '../game/date'
+import { dailyTargets, isRestDay, JOB_CHANGE_LEVEL, weeklyGoals, weeklyReward } from '../game/engine'
 import { usePlayer, useStore } from '../game/store'
 import type { DailyTargets } from '../game/types'
 
@@ -22,6 +22,7 @@ const DAILY_ORDER: (keyof DailyTargets)[] = ['pushup', 'situp', 'squat', 'run']
 export function Quests() {
   const data = usePlayer()
   const claim = useStore((s) => s.claimDaily)
+  const claimWeekly = useStore((s) => s.claimWeekly)
   const startTraining = useStore((s) => s.startTraining)
   const navigate = useStore((s) => s.navigate)
   const now = useNow()
@@ -29,6 +30,10 @@ export function Quests() {
   const { daily } = data
   const em = data.emergency
   const left = msUntilMidnight(now)
+  const restDay = isRestDay(data, dayKey(now))
+  const goals = weeklyGoals(data, now)
+  const weeklyDone = goals.every((g) => g.progress >= g.target)
+  const weekly = weeklyReward(data)
 
   return (
     <>
@@ -79,7 +84,7 @@ export function Quests() {
         </div>
 
         <div className="stack" style={{ gap: 14 }}>
-          {DAILY_ORDER.map((k, i) => {
+          {DAILY_ORDER.filter((k) => targets[k] > 0).map((k, i) => {
             const done = daily.progress[k] >= targets[k]
             return (
               <motion.div key={k} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.07 }}>
@@ -139,10 +144,61 @@ export function Quests() {
                 {formatCountdown(left)}
               </span>
             </div>
-            <p className="small warn-text center" style={{ margin: '12px 0 0' }}>
-              WARNING: Failure to complete the daily quest will result in an appropriate <b>penalty</b>.
-            </p>
+            {restDay ? (
+              <p className="small center" style={{ margin: '12px 0 0', color: 'var(--green)' }}>
+                Rest day. Recovery is part of training: today's quest is optional and carries no penalty.
+              </p>
+            ) : (
+              <p className="small warn-text center" style={{ margin: '12px 0 0' }}>
+                WARNING: Failure to complete the daily quest will result in an appropriate <b>penalty</b>.
+              </p>
+            )}
           </>
+        )}
+      </SystemWindow>
+
+      <SystemWindow title="Weekly Quest" bang={false} delay={0.12}>
+        <div className="center caps small" style={{ color: 'var(--cyan)', marginBottom: 12 }}>
+          [Weekly Quest: Forge an unbreakable body]
+        </div>
+        <div className="stack" style={{ gap: 12 }}>
+          {goals.map((g) => {
+            const done = g.progress >= g.target
+            const shown = Math.min(g.progress, g.target)
+            const ratio = g.exercise ? `${formatAmount(g.exercise, shown)}/${formatAmount(g.exercise, g.target)}` : `${shown}/${g.target} days`
+            return (
+              <div key={g.label}>
+                <div className="row between">
+                  <span style={{ fontWeight: 600 }}>{g.label}</span>
+                  <span className="row" style={{ gap: 8 }}>
+                    <span className={done ? 'glow' : 'muted'}>
+                      [{ratio}]
+                    </span>
+                    {!done && g.exercise && (
+                      <button className="btn small ghost" onClick={() => startTraining({ exercise: g.exercise!, target: g.target - g.progress, label: 'Weekly Quest' })}>
+                        Go
+                      </button>
+                    )}
+                  </span>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <Bar kind={done ? 'done' : ''} value={g.progress} max={g.target} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="divider" />
+        {data.weekly.claimed ? (
+          <div className="center glow caps">Weekly rewards received. A new quest arrives on Monday.</div>
+        ) : weeklyDone ? (
+          <button className="btn gold block pulse" onClick={claimWeekly}>
+            Claim weekly rewards
+          </button>
+        ) : (
+          <div className="small muted center">
+            Rewards: +{weekly.xp} XP · {weekly.gold} Gold · Instant Dungeon Key. Resets every Monday.
+          </div>
         )}
       </SystemWindow>
 

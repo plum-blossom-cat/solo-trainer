@@ -83,6 +83,8 @@ export interface DailyState {
   progress: DailyTargets
   completed: boolean
   rewardClaimed: boolean
+  /** Streak before today's completion, so an undo can restore it. */
+  streakBefore?: { current: number; best: number; lastDate: string | null }
 }
 
 export interface EmergencyQuest {
@@ -119,6 +121,31 @@ export interface Settings {
   voice: boolean
   reduceMotion: boolean
   showSkeleton: boolean
+  /** Weekdays (0 = Sunday) with no mandatory Daily Quest. */
+  restDays: number[]
+  reminderEnabled: boolean
+  /** Local time, HH:MM. */
+  reminderTime: string
+}
+
+/** One workout session: consecutive work on the same exercise. */
+export interface ActivityEntry {
+  id: string
+  exercise: ExerciseId
+  amount: number
+  start: number
+  end: number
+}
+
+export interface BodyLog {
+  heightCm: number | null
+  weights: { date: string; kg: number }[]
+}
+
+export interface WeeklyState {
+  /** Monday of the week, YYYY-MM-DD. */
+  week: string
+  claimed: boolean
 }
 
 export interface PlayerData {
@@ -156,4 +183,8 @@ export interface PlayerData {
   dungeonClears: Record<string, number>
   achievements: string[]
   settings: Settings
+  history: ActivityEntry[]
+  body: BodyLog
+  weekly: WeeklyState
+  lastReminderDate: string | null
 }

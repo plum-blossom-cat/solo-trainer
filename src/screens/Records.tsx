@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { Segmented, SystemWindow } from '../components/ui'
 import { formatAmount } from '../game/data'
 import { addDays, dayKey, parseDayKey } from '../game/date'
-import { emptyLog, lifetimeTotals } from '../game/engine'
+import { currentWeight, dayKcal, emptyLog, lifetimeTotals } from '../game/engine'
+import { BodyPanel, HistoryPanel, PersonalRecordsPanel } from './RecordsExtras'
 import { usePlayer } from '../game/store'
 import type { DayLog } from '../game/types'
 
@@ -218,7 +219,9 @@ export function Records() {
   const data = usePlayer()
   const [metric, setMetric] = useState<Metric>('xp')
   const [view, setView] = useState<'chart' | 'table'>('chart')
+  const [tab, setTab] = useState<'overview' | 'history' | 'body'>('overview')
   const totals = lifetimeTotals(data)
+  const kg = currentWeight(data) ?? 70
   const days = useMemo(() => {
     const out: DayLog[] = []
     for (let i = 13; i >= 0; i--) {
@@ -228,7 +231,12 @@ export function Records() {
     return out
   }, [data.logs])
 
+  const kcalToday = dayKcal(data.logs[dayKey()], kg)
+  const kcalWeek = days.slice(-7).reduce((sum, l) => sum + dayKcal(l, kg), 0)
+
   const tiles: [string, string][] = [
+    ['kcal today', `~${Math.round(kcalToday).toLocaleString()}`],
+    ['kcal last 7 days', `~${Math.round(kcalWeek).toLocaleString()}`],
     ['Push-ups', totals.pushup.toLocaleString()],
     ['Sit-ups', totals.situp.toLocaleString()],
     ['Squats', totals.squat.toLocaleString()],
@@ -241,8 +249,40 @@ export function Records() {
     ['Gates cleared', String(totals.gates)],
   ]
 
+  const tabs = (
+    <div style={{ marginTop: 12 }}>
+      <Segmented
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'history', label: 'History' },
+          { value: 'body', label: 'Body' },
+        ]}
+      />
+    </div>
+  )
+
+  if (tab === 'history') {
+    return (
+      <>
+        {tabs}
+        <HistoryPanel />
+      </>
+    )
+  }
+  if (tab === 'body') {
+    return (
+      <>
+        {tabs}
+        <BodyPanel />
+      </>
+    )
+  }
+
   return (
     <>
+      {tabs}
       <SystemWindow title="Hunter Records" bang={false}>
         <div className="grid-2">
           {tiles.map(([k, v]) => (
@@ -312,6 +352,8 @@ export function Records() {
       <SystemWindow title="Activity" bang={false} delay={0.1}>
         <Heatmap logs={data.logs} />
       </SystemWindow>
+
+      <PersonalRecordsPanel />
     </>
   )
 }
