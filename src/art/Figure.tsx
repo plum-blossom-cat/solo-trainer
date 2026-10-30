@@ -320,7 +320,7 @@ const ARTS: Record<FigureArt, ArtDef> = {
 }
 
 /**
- * Rendered images in src/art/images/<art>.png (made by scripts/generate-art.mjs)
+ * Pixel-art sprites in src/art/images/<art>.png (made by scripts/generate-art.mjs)
  * replace the matching silhouette automatically.
  */
 const IMAGES: Partial<Record<FigureArt, string>> = Object.fromEntries(
@@ -377,6 +377,7 @@ export function Figure({ art, variant = 'enemy', aura, size = 200, animate = tru
             height: size * 1.2,
             objectFit: 'contain',
             objectPosition: 'center bottom',
+            imageRendering: 'pixelated',
             transform: flip ? 'scaleX(-1)' : undefined,
             // Shadows are the same creature reborn: drained of colour and tinted by their aura.
             filter: [

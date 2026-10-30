@@ -1,12 +1,12 @@
 /**
- * Character art renderer.
+ * Pixel-art sprite renderer.
  *
- * Each character is a stack of shaped parts (scripts/art/characters.mjs).
- * Every part is rasterised, given a sculpted height field from its distance
- * transform (bevelled for armour, domed for flesh), bump-mapped with a
- * material texture (metal, cloth, fur, scales, stone, chitin, skin...) and lit
- * per pixel with diffuse, specular and rim light. Parts cast soft contact
- * shadows onto what lies beneath them. Output is a transparent PNG per slot.
+ * Character designs (scripts/art/characters.mjs) are rasterised onto a small
+ * pixel grid with no anti-aliasing. Every part is shaded with a hand-style
+ * colour ramp (cool, desaturated shadows; warm highlights), metal gets a
+ * specular pixel band, overlapping parts are separated by darker inner lines
+ * and the whole sprite gets a 1px outline. The sprite is then scaled up with
+ * nearest-neighbour so it stays crisp everywhere.
  *
  * usage: node scripts/generate-art.mjs [slot ...] [outDir] [--sheet sheet.png]
  */
@@ -18,200 +18,68 @@ import { CHARACTERS } from './art/characters.mjs'
 
 const W = 200
 const H = 240
-const SCALE = 2.4 // output pixels per design unit
-const SS = 2 // supersampling factor
-const S = SCALE * SS
-const WW = Math.round(W * S)
-const HH = Math.round(H * S)
+const PX = 0.3 // sprite pixels per design unit → 60×72 sprites
+const UP = 6 // nearest-neighbour upscale for the exported PNG
+const SW = Math.round(W * PX)
+const SH = Math.round(H * PX)
 
-/* ---------------------------------------------------------------- noise */
-
-function hash(x, y, seed) {
-  let h = (x * 374761393 + y * 668265263 + seed * 2147483647) | 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177)
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
-}
-
-function valueNoise(x, y, seed) {
-  const xi = Math.floor(x)
-  const yi = Math.floor(y)
-  const xf = x - xi
-  const yf = y - yi
-  const u = xf * xf * (3 - 2 * xf)
-  const v = yf * yf * (3 - 2 * yf)
-  const a = hash(xi, yi, seed)
-  const b = hash(xi + 1, yi, seed)
-  const c = hash(xi, yi + 1, seed)
-  const d = hash(xi + 1, yi + 1, seed)
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
-}
-
-function fbm(x, y, seed, octaves = 4) {
-  let sum = 0
-  let amp = 0.5
-  let f = 1
-  for (let i = 0; i < octaves; i++) {
-    sum += amp * valueNoise(x * f, y * f, seed + i * 17)
-    f *= 2.03
-    amp *= 0.5
-  }
-  return sum
-}
-
-/** Distance to the nearest cell centre and the edge between cells (for scales and plates). */
-function voronoi(x, y, seed) {
-  const xi = Math.floor(x)
-  const yi = Math.floor(y)
-  let d1 = 9
-  let d2 = 9
-  for (let j = -1; j <= 1; j++) {
-    for (let i = -1; i <= 1; i++) {
-      const cx = xi + i + hash(xi + i, yi + j, seed)
-      const cy = yi + j + hash(xi + i, yi + j, seed + 7)
-      const d = Math.hypot(x - cx, y - cy)
-      if (d < d1) {
-        d2 = d1
-        d1 = d
-      } else if (d < d2) d2 = d
-    }
-  }
-  return { d1, edge: d2 - d1 }
-}
-
-/* ------------------------------------------------------------ materials */
-
-/**
- * profile: height shape from the edge inward. bump(x, y) returns surface relief
- * in design units; tint(x, y) returns an albedo multiplier.
- */
-const MATERIALS = {
-  metal: {
-    profile: 'bevel', bevel: 0.32, depth: 0.55, ambient: 0.3, diffuse: 0.75, spec: 1.1, shine: 70, metallic: 0.85, rim: 0.55,
-    bump: (x, y, s) => (valueNoise(x * 0.25, y * 6, s) - 0.5) * 0.08 + (fbm(x * 0.6, y * 0.6, s) - 0.5) * 0.12,
-    tint: (x, y, s) => 0.9 + fbm(x * 0.15, y * 0.15, s) * 0.2,
-  },
-  cloth: {
-    profile: 'dome', depth: 0.35, ambient: 0.32, diffuse: 0.8, spec: 0.1, shine: 8, metallic: 0, rim: 0.5,
-    // Soft folds plus a fine weave.
-    bump: (x, y, s) =>
-      Math.sin(x * 0.35 + fbm(x * 0.05, y * 0.05, s) * 9) * 0.9 +
-      (Math.sin(x * 4.2) * Math.sin(y * 4.2)) * 0.06,
-    tint: (x, y, s) => 0.85 + fbm(x * 0.2, y * 0.2, s) * 0.3,
-  },
-  leather: {
-    profile: 'dome', depth: 0.4, ambient: 0.32, diffuse: 0.8, spec: 0.35, shine: 18, metallic: 0, rim: 0.45,
-    bump: (x, y, s) => (fbm(x * 1.4, y * 1.4, s) - 0.5) * 0.35,
-    tint: (x, y, s) => 0.8 + fbm(x * 0.4, y * 0.4, s) * 0.35,
-  },
-  skin: {
-    profile: 'dome', depth: 0.6, ambient: 0.34, diffuse: 0.8, spec: 0.3, shine: 22, metallic: 0, rim: 0.5,
-    bump: (x, y, s) => (fbm(x * 0.9, y * 0.9, s) - 0.5) * 0.35 + (valueNoise(x * 3, y * 3, s) - 0.5) * 0.06,
-    tint: (x, y, s) => 0.88 + fbm(x * 0.25, y * 0.25, s) * 0.25,
-  },
-  fur: {
-    profile: 'dome', depth: 0.6, ambient: 0.34, diffuse: 0.78, spec: 0.12, shine: 10, metallic: 0, rim: 0.7,
-    // Long, wavy strands.
-    bump: (x, y, s) => {
-      const w = fbm(x * 0.05, y * 0.05, s) * 6
-      return (valueNoise(x * 2.6 + w, y * 0.45, s) - 0.5) * 0.9
-    },
-    tint: (x, y, s) => 0.78 + valueNoise(x * 2.6 + fbm(x * 0.05, y * 0.05, s) * 6, y * 0.45, s + 3) * 0.4,
-  },
-  scale: {
-    profile: 'dome', depth: 0.6, ambient: 0.3, diffuse: 0.8, spec: 0.7, shine: 40, metallic: 0.2, rim: 0.6,
-    bump: (x, y, s) => {
-      const v = voronoi(x * 0.42, y * 0.42, s)
-      return Math.min(1, v.edge * 3) * 0.55 - v.d1 * 0.25
-    },
-    tint: (x, y, s) => {
-      const v = voronoi(x * 0.42, y * 0.42, s)
-      return 0.7 + Math.min(1, v.edge * 4) * 0.35
-    },
-  },
-  chitin: {
-    profile: 'dome', depth: 0.7, ambient: 0.28, diffuse: 0.75, spec: 1.2, shine: 90, metallic: 0.3, rim: 0.8,
-    bump: (x, y, s) => (fbm(x * 0.3, y * 0.3, s) - 0.5) * 0.25,
-    tint: (x, y, s) => 0.85 + fbm(x * 0.2, y * 0.2, s) * 0.3,
-  },
-  stone: {
-    profile: 'bevel', bevel: 0.4, depth: 0.5, ambient: 0.32, diffuse: 0.8, spec: 0.08, shine: 6, metallic: 0, rim: 0.35,
-    bump: (x, y, s) => {
-      const v = voronoi(x * 0.12, y * 0.12, s)
-      const crack = v.edge < 0.05 ? -1.2 : 0
-      return (fbm(x * 0.5, y * 0.5, s) - 0.5) * 1.1 + crack
-    },
-    tint: (x, y, s) => {
-      const v = voronoi(x * 0.12, y * 0.12, s)
-      return (0.75 + fbm(x * 0.35, y * 0.35, s) * 0.45) * (v.edge < 0.05 ? 0.55 : 1)
-    },
-  },
-  bone: {
-    profile: 'dome', depth: 0.6, ambient: 0.4, diffuse: 0.7, spec: 0.35, shine: 25, metallic: 0, rim: 0.4,
-    bump: (x, y, s) => (fbm(x * 1.2, y * 1.2, s) - 0.5) * 0.2,
-    tint: (x, y, s) => 0.85 + fbm(x * 0.6, y * 0.6, s) * 0.2,
-  },
-  membrane: {
-    profile: 'dome', depth: 0.25, ambient: 0.35, diffuse: 0.75, spec: 0.3, shine: 20, metallic: 0, rim: 0.9,
-    bump: (x, y, s) => (fbm(x * 0.25, y * 0.25, s) - 0.5) * 0.6,
-    tint: (x, y, s) => 0.75 + fbm(x * 0.5, y * 0.5, s) * 0.45,
-  },
-}
-
-const ORGANIC = new Set(['cloth', 'leather', 'skin', 'fur', 'scale', 'chitin', 'bone', 'membrane'])
-
-/** Chaikin corner cutting: rounds a polygon's silhouette. */
-function chaikin(poly, iterations) {
-  let pts = poly
-  for (let k = 0; k < iterations; k++) {
-    const next = []
-    for (let i = 0; i < pts.length; i++) {
-      const [ax, ay] = pts[i]
-      const [bx, by] = pts[(i + 1) % pts.length]
-      next.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75])
-    }
-    pts = next
-  }
-  return pts
-}
-
-function materialName(part, char) {
-  if (part.mat) return part.mat
-  if (part.gloss !== undefined && part.gloss >= 0.8) return 'metal'
-  return char.mat ?? 'cloth'
-}
-
-function materialFor(part, char) {
-  if (part.mat) return MATERIALS[part.mat]
-  if (part.gloss !== undefined && part.gloss >= 0.8) return MATERIALS.metal
-  return MATERIALS[char.mat ?? 'cloth']
-}
-
-/* -------------------------------------------------------------- raster */
+/* --------------------------------------------------------------- colour */
 
 function hex(c) {
   const v = parseInt(c.slice(1), 16)
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
 }
 
-function bounds(poly) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const [x, y] of poly) {
-    x0 = Math.min(x0, x); y0 = Math.min(y0, y)
-    x1 = Math.max(x1, x); y1 = Math.max(y1, y)
-  }
-  return { x0, y0, x1, y1 }
+function rgbToHsl([r, g, b]) {
+  r /= 255; g /= 255; b /= 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return [0, 0, l]
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  return [h * 60, s, l]
 }
 
-/** Scanline fill of a polygon into a local mask (pixel centres, even-odd). */
-function fillMask(poly, pad) {
-  const b = bounds(poly)
-  const ox = Math.max(0, Math.floor(b.x0 * S) - pad)
-  const oy = Math.max(0, Math.floor(b.y0 * S) - pad)
-  const w = Math.min(WW, Math.ceil(b.x1 * S) + pad) - ox
-  const h = Math.min(HH, Math.ceil(b.y1 * S) + pad) - oy
-  const mask = new Uint8Array(Math.max(0, w * h))
-  const pts = poly.map(([x, y]) => [x * S - ox, y * S - oy])
-  for (let y = 0; y < h; y++) {
+function hslToRgb([h, s, l]) {
+  h = ((h % 360) + 360) % 360
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  return [r, g, b].map((v) => Math.round(Math.max(0, Math.min(1, v + m)) * 255))
+}
+
+/** Hue-shifted ramp in the classic pixel-art manner: shadows drift toward blue, highlights toward yellow. */
+function ramp(base, metal) {
+  const [h, s, l] = rgbToHsl(hex(base))
+  const toward = (target, k) => {
+    let d = target - h
+    if (d > 180) d -= 360
+    if (d < -180) d += 360
+    return h + d * k
+  }
+  const steps = metal
+    ? [[-0.3, 0.25, 0.85], [-0.15, 0.12, 0.95], [0, 0, 1], [0.16, 0.12, 0.85], [0.34, 0.25, 0.6]]
+    : [[-0.28, 0.3, 1.05], [-0.14, 0.15, 1], [0, 0, 1], [0.13, 0.12, 0.9]]
+  return steps.map(([dl, hk, sk]) => {
+    const target = dl < 0 ? 245 : 50
+    const hh = s < 0.06 ? h : toward(target, hk)
+    return hslToRgb([hh, Math.min(1, s * sk), Math.max(0.03, Math.min(0.97, l + dl))])
+  })
+}
+
+/* --------------------------------------------------------------- raster */
+
+/** Pixel-centre polygon fill (even-odd), no anti-aliasing. */
+function rasterise(poly) {
+  const mask = new Uint8Array(SW * SH)
+  const pts = poly.map(([x, y]) => [x * PX, y * PX])
+  for (let y = 0; y < SH; y++) {
     const py = y + 0.5
     const xs = []
     for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -219,264 +87,118 @@ function fillMask(poly, pad) {
       const [xj, yj] = pts[j]
       if (yi > py !== yj > py) xs.push(xi + ((py - yi) * (xj - xi)) / (yj - yi))
     }
-    xs.sort((a, b2) => a - b2)
+    xs.sort((a, b) => a - b)
     for (let k = 0; k + 1 < xs.length; k += 2) {
-      const a = Math.max(0, Math.ceil(xs[k] - 0.5))
-      const e = Math.min(w - 1, Math.floor(xs[k + 1] - 0.5))
-      for (let x = a; x <= e; x++) mask[y * w + x] = 1
+      for (let x = Math.max(0, Math.ceil(xs[k] - 0.5)); x <= Math.min(SW - 1, Math.floor(xs[k + 1] - 0.5)); x++) mask[y * SW + x] = 1
     }
   }
-  return { mask, ox, oy, w, h }
-}
-
-/** Exact Euclidean distance transform (Felzenszwalb–Huttenlocher), distance to the nearest outside pixel. */
-function edt(mask, w, h) {
-  const INF = 1e12
-  const f = new Float64Array(Math.max(w, h))
-  const d = new Float64Array(Math.max(w, h))
-  const v = new Int32Array(Math.max(w, h))
-  const z = new Float64Array(Math.max(w, h) + 1)
-  const grid = new Float64Array(w * h)
-  for (let i = 0; i < w * h; i++) grid[i] = mask[i] ? INF : 0
-  const pass = (n) => {
-    let k = 0
-    v[0] = 0
-    z[0] = -INF
-    z[1] = INF
-    for (let q = 1; q < n; q++) {
-      let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
-      while (s <= z[k]) {
-        k--
-        s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
+  // Very thin parts (blades, spears, antennae) can vanish between pixel
+  // centres; fall back to plotting the polygon's outline so they survive.
+  if (!mask.some(Boolean)) {
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i]
+      const [bx, by] = pts[(i + 1) % pts.length]
+      const n = Math.ceil(Math.hypot(bx - ax, by - ay) * 2) + 1
+      for (let t = 0; t <= n; t++) {
+        const x = Math.floor(ax + ((bx - ax) * t) / n)
+        const y = Math.floor(ay + ((by - ay) * t) / n)
+        if (x >= 0 && y >= 0 && x < SW && y < SH) mask[y * SW + x] = 1
       }
-      k++
-      v[k] = q
-      z[k] = s
-      z[k + 1] = INF
-    }
-    k = 0
-    for (let q = 0; q < n; q++) {
-      while (z[k + 1] < q) k++
-      d[q] = (q - v[k]) ** 2 + f[v[k]]
     }
   }
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) f[y] = grid[y * w + x]
-    pass(h)
-    for (let y = 0; y < h; y++) grid[y * w + x] = d[y]
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) f[x] = grid[y * w + x]
-    pass(w)
-    for (let x = 0; x < w; x++) grid[y * w + x] = Math.sqrt(d[x])
-  }
-  return grid
+  return mask
 }
 
-function boxBlur(src, w, h, r) {
-  const tmp = new Float32Array(w * h)
-  const out = new Float32Array(w * h)
-  for (let y = 0; y < h; y++) {
-    let acc = 0
-    for (let x = -r; x <= r; x++) acc += src[y * w + Math.min(w - 1, Math.max(0, x))]
-    for (let x = 0; x < w; x++) {
-      tmp[y * w + x] = acc / (2 * r + 1)
-      acc += src[y * w + Math.min(w - 1, x + r + 1)] - src[y * w + Math.max(0, x - r)]
-    }
-  }
-  for (let x = 0; x < w; x++) {
-    let acc = 0
-    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x]
-    for (let y = 0; y < h; y++) {
-      out[y * w + x] = acc / (2 * r + 1)
-      acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]
-    }
-  }
-  return out
-}
+const isMetal = (part) => part.mat === 'metal' || (part.gloss !== undefined && part.gloss >= 0.8)
 
-const LIGHT = norm([-0.5, -0.75, 0.85])
-const BACK = norm([0.75, 0.25, 0.35])
-const HALF = norm([LIGHT[0], LIGHT[1], LIGHT[2] + 1])
-
-function norm(v) {
-  const m = Math.hypot(...v)
-  return v.map((x) => x / m)
-}
-
-function render(char) {
-  const color = new Float32Array(WW * HH * 3)
-  const alpha = new Float32Array(WW * HH)
+function renderSprite(char) {
+  const px = new Array(SW * SH).fill(null) // [r,g,b] or null
+  const owner = new Int32Array(SW * SH).fill(-1)
   const glows = []
-  const seed = char.seed ?? 7
 
   char.parts.forEach((part, index) => {
-    if (part.glow) glows.push(part)
-    const pad = Math.round(4 * S)
-    // Organic parts get rounded silhouettes; armour and blades keep crisp corners
-    // except for a slight softening.
-    const matName = materialName(part, char)
-    const smooth = part.smooth ?? (part.emit ? 0 : ORGANIC.has(matName) ? 3 : 1)
-    const pts = part.pts.length > 3 || smooth > 1 ? chaikin(part.pts, smooth) : part.pts
-    const { mask, ox, oy, w, h } = fillMask(pts, pad)
-    if (!w || !h) return
-    const base = hex(part.color)
-    const partAlpha = part.alpha ?? 1
-
-    // Soft contact shadow cast down-right onto everything already drawn.
-    if (!part.emit && partAlpha > 0.5) {
-      const sh = new Float32Array(w * h)
-      const off = Math.round(1.6 * S)
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) if (mask[y * w + x]) {
-          const tx = x + off
-          const ty = y + Math.round(off * 1.3)
-          if (tx < w && ty < h) sh[ty * w + tx] = 1
-        }
-      }
-      const blurred = boxBlur(sh, w, h, Math.max(1, Math.round(1.8 * S)))
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const k = blurred[y * w + x] * 0.5
-          if (!k || mask[y * w + x]) continue
-          const gi = (oy + y) * WW + ox + x
-          if (!alpha[gi]) continue
-          for (let c = 0; c < 3; c++) color[gi * 3 + c] *= 1 - k
-        }
-      }
-    }
-
+    const mask = rasterise(part.pts)
+    if (part.glow) glows.push({ part, mask })
+    const alpha = part.alpha ?? 1
     if (part.emit) {
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          if (!mask[y * w + x]) continue
-          const gi = (oy + y) * WW + ox + x
-          composite(color, alpha, gi, base, partAlpha)
-        }
+      const c = hex(part.color)
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue
+        px[i] = alpha < 1 && px[i] ? px[i].map((v, k) => Math.round(v * (1 - alpha) + c[k] * alpha)) : c
+        owner[i] = index
       }
       return
     }
 
-    const mat = materialFor(part, char)
-    const dist = edt(mask, w, h)
-    let maxD = 1
-    for (let i = 0; i < dist.length; i++) if (dist[i] > maxD) maxD = dist[i]
-    const depth = (part.depth ?? mat.depth) * maxD
-    const bevelR = Math.max(2, (part.bevel ?? mat.bevel ?? 1) * maxD)
-    const pseed = seed * 131 + index * 7
-    const bumpScale = (part.bump ?? 1) * S * 0.6
-
-    // Height field: a profile from the edge inward, blurred so the medial-axis
-    // creases of a distance field melt into smooth, sculpted forms.
-    const profile = new Float32Array(w * h)
-    for (let i = 0; i < w * h; i++) {
-      if (!mask[i]) continue
-      const dd = dist[i]
-      if (mat.profile === 'bevel') {
-        const t = Math.min(1, dd / bevelR)
-        profile[i] = Math.sqrt(1 - (1 - t) * (1 - t)) * (bevelR / maxD) * 0.9 + (dd / maxD) * 0.1
-      } else {
-        const t = dd / maxD
-        profile[i] = Math.sqrt(1 - (1 - t) * (1 - t))
-      }
+    const metal = isMetal(part) || (char.mat === 'metal' && !part.mat)
+    const r = ramp(part.color, metal)
+    const top = r.length - 1
+    // Shape extents for a domed light falloff across the part.
+    let x0 = SW, y0 = SH, x1 = 0, y1 = 0
+    for (let i = 0; i < mask.length; i++) if (mask[i]) {
+      const x = i % SW, y = (i / SW) | 0
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y)
     }
-    const blurR = Math.max(1, Math.round(maxD * (mat.profile === 'bevel' ? 0.12 : 0.3)))
-    const soft = boxBlur(boxBlur(profile, w, h, blurR), w, h, blurR)
-    const height = new Float32Array(w * h)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x
-        if (!mask[i]) continue
-        const ux = (ox + x) / S
-        const uy = (oy + y) / S
-        height[i] = soft[i] * depth + mat.bump(ux, uy, pseed) * bumpScale * Math.min(1, dist[i] / (S * 1.2))
-      }
-    }
+    const cx = (x0 + x1) / 2
+    const cy = (y0 + y1) / 2
+    const hw = Math.max(1, (x1 - x0) / 2)
+    const hh = Math.max(1, (y1 - y0) / 2)
+    const inPart = (x, y) => x >= 0 && y >= 0 && x < SW && y < SH && mask[y * SW + x]
 
-    const [lr, lg, lb] = part.rim ? hex(part.rim) : [210, 225, 255]
-    const ambient = part.ambient ?? mat.ambient
-    const specK = mat.spec * (part.spec ?? 1)
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x
+    for (let y = 0; y < SH; y++) {
+      for (let x = 0; x < SW; x++) {
+        const i = y * SW + x
         if (!mask[i]) continue
-        const hx = (mask[i + 1] ? height[i + 1] : height[i]) - (mask[i - 1] ? height[i - 1] : height[i])
-        const hy = (mask[i + w] ? height[i + w] : height[i]) - (mask[i - w] ? height[i - w] : height[i])
-        const n = norm([-hx * 0.5, -hy * 0.5, 1])
-        const ndl = Math.max(0, n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2])
-        const ndh = Math.max(0, n[0] * HALF[0] + n[1] * HALF[1] + n[2] * HALF[2])
-        const rimT = Math.max(0, n[0] * BACK[0] + n[1] * BACK[1] + n[2] * BACK[2]) ** 2 * (1 - n[2]) * 2
-        const spec = Math.pow(ndh, mat.shine) * specK
-        const ux = (ox + x) / S
-        const uy = (oy + y) / S
-        const tint = mat.tint(ux, uy, pseed)
-        // Edge occlusion: crevices along the silhouette stay darker.
-        const occ = 0.72 + 0.28 * Math.min(1, dist[i] / (S * 1.5))
-        const lit = (ambient + ndl * mat.diffuse) * occ
-        const rgb = [0, 1, 2].map((c) => {
-          const alb = base[c] * tint
-          const specCol = 255 * (1 - mat.metallic) + alb * 1.6 * mat.metallic
-          const rimCol = [lr, lg, lb][c]
-          return alb * lit + specCol * spec + rimCol * rimT * mat.rim * (part.rimStrength ?? 0.6)
-        })
-        composite(color, alpha, (oy + y) * WW + ox + x, rgb, partAlpha)
+        // Light from the upper left: a domed falloff plus crisp edge shading.
+        const nx = (x - cx) / hw
+        const ny = (y - cy) / hh
+        let lit = 0.55 - nx * 0.38 - ny * 0.32
+        const upLeft = !inPart(x - 1, y) || !inPart(x, y - 1)
+        const downRight = !inPart(x + 1, y) || !inPart(x, y + 1)
+        if (upLeft) lit += 0.3
+        if (downRight) lit -= 0.35
+        // Two-pixel bands keep the shading readable instead of noisy.
+        let level = Math.round(Math.max(0, Math.min(1, lit)) * (top - (metal ? 0 : 0.4)))
+        if (metal && level === top && !upLeft) level = top - 1
+        level = Math.max(0, Math.min(top, level))
+        let c = r[level]
+        // Inner line where this part overlaps another, so shapes stay distinct.
+        const neighbours = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]
+        if (neighbours.some(([nx2, ny2]) => !inPart(nx2, ny2) && nx2 >= 0 && ny2 >= 0 && nx2 < SW && ny2 < SH && px[ny2 * SW + nx2] && owner[ny2 * SW + nx2] !== index)) {
+          c = r[0].map((v) => Math.round(v * 0.7))
+        }
+        px[i] = alpha < 1 && px[i] ? px[i].map((v, k) => Math.round(v * (1 - alpha) + c[k] * alpha)) : c
+        owner[i] = index
       }
     }
   })
 
-  // Downsample.
-  const ow = Math.round(W * SCALE)
-  const oh = Math.round(H * SCALE)
-  const out = new Float32Array(ow * oh * 4)
-  for (let y = 0; y < oh; y++) {
-    for (let x = 0; x < ow; x++) {
-      let r = 0, g = 0, b = 0, al = 0
-      for (let sy = 0; sy < SS; sy++) {
-        for (let sx = 0; sx < SS; sx++) {
-          const gi = (y * SS + sy) * WW + x * SS + sx
-          const a = alpha[gi]
-          r += color[gi * 3] * a; g += color[gi * 3 + 1] * a; b += color[gi * 3 + 2] * a; al += a
-        }
-      }
-      const o = (y * ow + x) * 4
-      out[o + 3] = al / (SS * SS)
-      if (al) {
-        out[o] = Math.min(255, r / al)
-        out[o + 1] = Math.min(255, g / al)
-        out[o + 2] = Math.min(255, b / al)
-      }
+  // 1px outline around the whole sprite, tinted by the darkest neighbour.
+  const outline = hex(char.outline ?? '#06060c')
+  const out = px.slice()
+  for (let y = 0; y < SH; y++) {
+    for (let x = 0; x < SW; x++) {
+      const i = y * SW + x
+      if (px[i]) continue
+      const n = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]].some(([a, b]) => a >= 0 && b >= 0 && a < SW && b < SH && px[b * SW + a])
+      if (n) out[i] = outline
     }
   }
 
-  // Additive halos for eyes, runes and flames.
-  for (const part of glows) {
-    const [r, g, b] = hex(part.glow)
-    const cx = (part.pts.reduce((s, q) => s + q[0], 0) / part.pts.length) * SCALE
-    const cy = (part.pts.reduce((s, q) => s + q[1], 0) / part.pts.length) * SCALE
-    const R = (part.glowR ?? 10) * SCALE
-    for (let y = Math.max(0, Math.floor(cy - R)); y < Math.min(oh, cy + R); y++) {
-      for (let x = Math.max(0, Math.floor(cx - R)); x < Math.min(ow, cx + R); x++) {
-        const dd = Math.hypot(x - cx, y - cy) / R
-        if (dd >= 1) continue
-        const k = (1 - dd) ** 2.2 * (part.glowStrength ?? 0.9)
-        const o = (y * ow + x) * 4
-        const a0 = out[o + 3]
-        const a1 = Math.min(1, a0 + k)
-        out[o] = Math.min(255, (out[o] * a0 + r * k) / a1)
-        out[o + 1] = Math.min(255, (out[o + 1] * a0 + g * k) / a1)
-        out[o + 2] = Math.min(255, (out[o + 2] * a0 + b * k) / a1)
-        out[o + 3] = a1
+  // Glowing eyes and runes: a soft one-pixel halo of the glow colour.
+  const halo = new Array(SW * SH).fill(null)
+  for (const { part, mask } of glows) {
+    const g = hex(part.glow)
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue
+      const x = i % SW, y = (i / SW) | 0
+      for (const [a, b] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1], [x - 1, y + 1]]) {
+        if (a < 0 || b < 0 || a >= SW || b >= SH || mask[b * SW + a]) continue
+        halo[b * SW + a] = g
       }
     }
   }
-  return { w: ow, h: oh, px: out }
-}
-
-function composite(color, alpha, gi, rgb, a) {
-  const da = alpha[gi]
-  const oa = a + da * (1 - a)
-  for (let c = 0; c < 3; c++) color[gi * 3 + c] = (Math.max(0, rgb[c]) * a + color[gi * 3 + c] * da * (1 - a)) / (oa || 1)
-  alpha[gi] = oa
+  return { out, halo }
 }
 
 /* ----------------------------------------------------------------- PNG */
@@ -502,33 +224,48 @@ function chunk(type, data) {
   return Buffer.concat([len, td, crc])
 }
 
-function png(w, h, rgba, background = null) {
+/** Encodes an RGBA byte buffer. */
+function png(w, h, rgba) {
   const raw = Buffer.alloc((w * 4 + 1) * h)
   for (let y = 0; y < h; y++) {
     raw[y * (w * 4 + 1)] = 0
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      const o = y * (w * 4 + 1) + 1 + x * 4
-      let a = rgba[i + 3]
-      let rgb = [rgba[i], rgba[i + 1], rgba[i + 2]]
-      if (background) {
-        rgb = rgb.map((v, c) => v * a + background[c] * (1 - a))
-        a = 1
-      }
-      raw[o] = Math.round(rgb[0]); raw[o + 1] = Math.round(rgb[1]); raw[o + 2] = Math.round(rgb[2])
-      raw[o + 3] = Math.round(a * 255)
-    }
+    rgba.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4)
   }
   const ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(w, 0)
   ihdr.writeUInt32BE(h, 4)
-  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0
+  ihdr[8] = 8; ihdr[9] = 6
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
     chunk('IDAT', deflateSync(raw, { level: 9 })),
     chunk('IEND', Buffer.alloc(0)),
   ])
+}
+
+/** Scales the sprite up with nearest-neighbour into RGBA bytes. */
+function toRgba({ out, halo }, scale, background = null) {
+  const w = SW * scale
+  const h = SH * scale
+  const buf = Buffer.alloc(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = ((y / scale) | 0) * SW + ((x / scale) | 0)
+      const o = (y * w + x) * 4
+      const c = out[i]
+      if (c) {
+        buf[o] = c[0]; buf[o + 1] = c[1]; buf[o + 2] = c[2]; buf[o + 3] = 255
+      } else if (halo[i]) {
+        const a = 0.45
+        const bg = background ?? halo[i]
+        for (let k = 0; k < 3; k++) buf[o + k] = Math.round(halo[i][k] * a + bg[k] * (background ? 1 - a : 0))
+        buf[o + 3] = background ? 255 : Math.round(a * 255)
+      } else if (background) {
+        buf[o] = background[0]; buf[o + 1] = background[1]; buf[o + 2] = background[2]; buf[o + 3] = 255
+      }
+    }
+  }
+  return { w, h, buf }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -541,33 +278,30 @@ const only = args.filter((a) => !a.includes('/'))
 const outDir = args.find((a) => a.includes('/')) ?? join(root, 'src/art/images')
 mkdirSync(outDir, { recursive: true })
 
-const rendered = []
+const sprites = []
 for (const [slot, char] of Object.entries(CHARACTERS)) {
   if (only.length && !only.includes(slot)) continue
-  const img = render(char)
-  writeFileSync(join(outDir, `${slot}.png`), png(img.w, img.h, img.px))
-  console.log(`${slot}: ${char.parts.length} parts`)
-  rendered.push(img)
+  const sprite = renderSprite(char)
+  const img = toRgba(sprite, UP)
+  writeFileSync(join(outDir, `${slot}.png`), png(img.w, img.h, img.buf))
+  console.log(`${slot}: ${SW}×${SH} sprite`)
+  sprites.push(sprite)
 }
 
-if (sheetPath && rendered.length) {
+if (sheetPath && sprites.length) {
   // Contact sheet on the app's background colour, for reviewing the cast.
-  const cols = Math.min(5, rendered.length)
-  const rows = Math.ceil(rendered.length / cols)
-  const cw = rendered[0].w
-  const ch = rendered[0].h
-  const sheet = new Float32Array(cols * cw * rows * ch * 4)
-  rendered.forEach((img, i) => {
-    const ox = (i % cols) * cw
-    const oy = Math.floor(i / cols) * ch
-    for (let y = 0; y < ch; y++) {
-      for (let x = 0; x < cw; x++) {
-        const s = (y * cw + x) * 4
-        const d = ((oy + y) * cols * cw + ox + x) * 4
-        for (let c = 0; c < 4; c++) sheet[d + c] = img.px[s + c]
-      }
-    }
+  const scale = 5
+  const cols = Math.min(5, sprites.length)
+  const rows = Math.ceil(sprites.length / cols)
+  const cw = SW * scale
+  const ch = SH * scale
+  const sheet = Buffer.alloc(cols * cw * rows * ch * 4)
+  sprites.forEach((s, n) => {
+    const img = toRgba(s, scale, [5, 11, 26])
+    const ox = (n % cols) * cw
+    const oy = Math.floor(n / cols) * ch
+    for (let y = 0; y < ch; y++) img.buf.copy(sheet, ((oy + y) * cols * cw + ox) * 4, y * cw * 4, (y + 1) * cw * 4)
   })
-  writeFileSync(sheetPath, png(cols * cw, rows * ch, sheet, [5, 11, 26]))
+  writeFileSync(sheetPath, png(cols * cw, rows * ch, sheet))
   console.log(`sheet: ${sheetPath}`)
 }

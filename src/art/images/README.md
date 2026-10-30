@@ -1,17 +1,17 @@
 # Character images
 
-Rendered images of the original character designs, one per art slot. Each
-part is sculpted into a smooth height field, textured with its material
-(metal, cloth, fur, scales, stone, chitin...) and lit per pixel. They are
-generated, not hand-edited:
+Pixel-art sprites of the original character designs, one per art slot
+(60×72 pixels, exported at 6× with nearest-neighbour scaling). Each part is
+shaded with a hue-shifted colour ramp and the sprite gets a 1px outline.
+They are generated, not hand-edited:
 
 ```bash
 npm run art                 # regenerate every slot
 node scripts/generate-art.mjs wolf goblin   # regenerate selected slots
 ```
 
-Designs live in `scripts/art/characters.mjs`; sculpting, materials, lighting
-and PNG encoding live in `scripts/generate-art.mjs`. Shadow versions are tinted
+Designs live in `scripts/art/characters.mjs`; rasterising, shading,
+outlining and PNG encoding live in `scripts/generate-art.mjs`. Shadow versions are tinted
 in the app, so each slot needs only one image.
 
 | File | Used for |
