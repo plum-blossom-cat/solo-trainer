@@ -1,18 +1,16 @@
 # Character images
 
-Each file here is an **ink layer**: white lines on a transparent
-background, named after a character slot. It replaces that slot's
-silhouette everywhere in the app, and the app tints it per variant (blue
-hunter, red enemy, purple shadow) and adds the glow.
-
-Make one from a public-domain engraving:
+Low-poly renders of the original character designs, one per art slot. They
+are generated, not hand-edited:
 
 ```bash
-python3 scripts/process-engraving.py scan.jpg src/art/images/wolf.png --crop 0.1,0.2,0.9,1
+npm run art                 # regenerate every slot
+node scripts/generate-art.mjs wolf goblin   # regenerate selected slots
 ```
 
-`--crop` takes fractions of the image (x0,y0,x1,y1) to isolate one figure;
-`--flip` mirrors it. Restart `npm run dev` after adding a file.
+Designs live in `scripts/art/characters.mjs`; the triangulation, shading and
+PNG encoding live in `scripts/generate-art.mjs`. Shadow versions are tinted
+in the app, so each slot needs only one image.
 
 | File | Used for |
 |---|---|
@@ -30,6 +28,3 @@ python3 scripts/process-engraving.py scan.jpg src/art/images/wolf.png --crop 0.1
 | `ant` | Jeju Island, the Beru shadow |
 | `centipede` | Penalty Zone |
 | `statue` | Monarch's Domain, the Bellion shadow |
-
-**This repository is public.** Only add art you have the right to
-redistribute (for example CC0 or CC-BY), and list it in `CREDITS.md`.

@@ -320,9 +320,8 @@ const ARTS: Record<FigureArt, ArtDef> = {
 }
 
 /**
- * Ink layers in src/art/images/<art>.png (made with scripts/process-engraving.py)
- * replace the matching silhouette automatically. Only use art you have the
- * rights to, and record it in CREDITS.md.
+ * Low-poly renders in src/art/images/<art>.png (made by scripts/generate-art.mjs)
+ * replace the matching silhouette automatically.
  */
 const IMAGES: Partial<Record<FigureArt, string>> = Object.fromEntries(
   Object.entries(
@@ -366,35 +365,28 @@ export function Figure({ art, variant = 'enemy', aura, size = 200, animate = tru
       />
       {variant === 'shadow' && <Smoke color={auraColor} />}
       {IMAGES[art] ? (
-        // Engraving ink layers are white-on-transparent; the mask lets each
-        // variant tint the same lines (blue hunter, red enemy, purple shadow).
-        <div
+        <img
+          src={IMAGES[art]}
+          alt=""
           aria-hidden
+          draggable={false}
           style={{
             position: 'relative',
+            display: 'block',
             width: size,
             height: size * 1.2,
+            objectFit: 'contain',
+            objectPosition: 'center bottom',
             transform: flip ? 'scaleX(-1)' : undefined,
-            filter: `drop-shadow(0 0 ${variant === 'enemy' ? 3 : 6}px ${auraColor}) ${hurt ? 'brightness(2.2)' : ''}`,
+            // Shadows are the same creature reborn: drained of colour and tinted by their aura.
+            filter: [
+              variant === 'shadow' ? 'grayscale(0.7) brightness(0.5) sepia(0.7) hue-rotate(220deg) saturate(2.4)' : '',
+              `drop-shadow(0 0 ${variant === 'enemy' ? 5 : 9}px ${auraColor})`,
+              hurt ? 'brightness(2.2)' : '',
+            ].join(' '),
             transition: 'filter 0.12s',
           }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: `linear-gradient(180deg, ${variant === 'enemy' ? '#fee2e2' : '#f5f3ff'} 0%, ${auraColor} 100%)`,
-              WebkitMaskImage: `url(${IMAGES[art]})`,
-              maskImage: `url(${IMAGES[art]})`,
-              WebkitMaskSize: 'contain',
-              maskSize: 'contain',
-              WebkitMaskRepeat: 'no-repeat',
-              maskRepeat: 'no-repeat',
-              WebkitMaskPosition: 'center bottom',
-              maskPosition: 'center bottom',
-            }}
-          />
-        </div>
+        />
       ) : (
       <svg
         viewBox="0 0 200 240"

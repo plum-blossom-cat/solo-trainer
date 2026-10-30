@@ -1,7 +1,5 @@
 # Art credits
 
-Third-party art used in this project, with its license. Every image in
-`src/art/images/` must be listed here.
-
-| File | Title / author | Source | License |
-|---|---|---|---|
+All character art in this project is original, generated from the designs in
+`scripts/art/characters.mjs` by `scripts/generate-art.mjs`. No third-party
+artwork is included. If you add any, list it here with its source and license.
