@@ -1,10 +1,12 @@
 /**
  * Original character designs for each art slot, in a 200×240 design space
- * (ground at y≈232). Each part is a polygon plus a base colour; the generator
- * cuts every part into many shaded triangles.
+ * (ground at y≈232). Each part is a polygon plus a base colour; the renderer
+ * sculpts, textures and lights every part per pixel.
  *
- * Part options: d (triangle size), emit (unlit), glow (additive halo colour),
- * glowR, rim (rim-light colour), gloss, ambient, diffuse, facet, round, alpha.
+ * Character option: mat (default material). Part options: mat (metal, cloth,
+ * leather, skin, fur, scale, chitin, stone, bone, membrane), emit (unlit),
+ * glow (halo colour), glowR, rim (rim-light colour), gloss (>= 0.8 means
+ * metal), ambient, depth, bevel, bump, spec, rimStrength, alpha.
  */
 
 /* ------------------------------------------------------------- helpers */
@@ -63,6 +65,7 @@ const eyes = (pts, color, glow, glowR = 8) => both(pts, color, { emit: true, glo
 /* --------------------------------------------------------------- cast */
 
 const hunter = {
+  mat: 'cloth',
   seed: 11,
   parts: [
     part([[72, 100], [56, 226], [78, 232], [100, 176], [122, 232], [144, 226], [128, 100]], '#1a2340', { rim: '#60a5fa' }),
@@ -89,6 +92,7 @@ const hunter = {
 }
 
 const soldier = {
+  mat: 'metal',
   seed: 12,
   parts: [
     part([[147, 40], [151, 40], [151, 230], [147, 230]], '#3f3f46', { d: 2.5 }),
@@ -113,6 +117,7 @@ const soldier = {
 }
 
 const goblin = {
+  mat: 'skin',
   seed: 13,
   parts: [
     ...both([[86, 192], [80, 226], [92, 228], [97, 200]], '#4d7c0f'),
@@ -139,6 +144,7 @@ const goblin = {
 }
 
 const hobgoblin = {
+  mat: 'skin',
   seed: 14,
   parts: [
     ...both([[80, 180], [72, 226], [92, 228], [98, 190]], '#3f6212'),
@@ -169,6 +175,7 @@ const hobgoblin = {
 }
 
 const wolf = {
+  mat: 'fur',
   seed: 15,
   parts: [
     part([[146, 150], [160, 178], [150, 204], [156, 228], [166, 228], [162, 204], [174, 176], [164, 148]], '#1e293b'),
@@ -198,6 +205,7 @@ const wolf = {
 
 const kasakaLine = [[18, 226], [60, 232], [110, 230], [150, 214], [162, 190], [150, 168], [110, 160], [84, 146], [78, 120], [90, 96], [112, 84], [130, 80]]
 const kasaka = {
+  mat: 'scale',
   seed: 16,
   parts: [
     part(tube(kasakaLine, (t) => 3 + Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * 22 - t * 6), '#2563eb', { rim: '#93c5fd', d: 5, gloss: 0.6 }),
@@ -216,6 +224,7 @@ const kasaka = {
 }
 
 const knight = {
+  mat: 'metal',
   seed: 17,
   parts: [
     part([[146, 40], [152, 40], [152, 150], [146, 150]], '#e5e7eb', { d: 2.5, gloss: 1, rim: '#ffffff' }),
@@ -251,6 +260,7 @@ const knight = {
 }
 
 const commander = {
+  mat: 'metal',
   seed: 18,
   parts: [
     part(
@@ -286,6 +296,7 @@ const commander = {
 }
 
 const bear = {
+  mat: 'fur',
   seed: 19,
   parts: [
     part([[64, 176], [60, 228], [76, 230], [80, 180]], '#94a3b8'),
@@ -312,6 +323,7 @@ const bear = {
 }
 
 const orc = {
+  mat: 'skin',
   seed: 20,
   parts: [
     part([[160, 40], [166, 40], [166, 230], [160, 230]], '#57534e', { d: 2.5 }),
@@ -345,6 +357,7 @@ const orc = {
 }
 
 const demon = {
+  mat: 'skin',
   seed: 21,
   parts: [
     ...both([[84, 92], [60, 60], [30, 36], [4, 40], [16, 58], [8, 76], [26, 86], [16, 104], [40, 104], [44, 122], [70, 110]], '#450a0a', { facet: 0.5, rim: '#f87171' }),
@@ -376,6 +389,7 @@ const demon = {
 }
 
 const wyvern = {
+  mat: 'scale',
   seed: 22,
   parts: [
     ...both([[88, 104], [60, 70], [24, 30], [12, 34], [16, 60], [2, 64], [12, 92], [2, 104], [22, 118], [18, 136], [50, 130], [78, 128]], '#134e4a', { facet: 0.5, rim: '#5eead4' }),
@@ -402,6 +416,7 @@ const wyvern = {
 }
 
 const ant = {
+  mat: 'chitin',
   seed: 23,
   parts: [
     ...both([[90, 96], [52, 56], [22, 52], [30, 84], [60, 108]], '#c4b5fd', { alpha: 0.32, facet: 0.2, emit: true }),
@@ -431,6 +446,7 @@ const ant = {
 const centipedeLine = [[198, 226], [160, 232], [120, 226], [96, 206], [90, 176], [100, 146], [110, 116], [100, 86], [80, 66], [60, 56]]
 const centipedeSegs = resample(centipedeLine, 11).reverse()
 const centipede = {
+  mat: 'chitin',
   seed: 24,
   parts: [
     ...centipedeSegs.flatMap(([x, y], i) => {
@@ -468,6 +484,7 @@ const centipede = {
 }
 
 const statue = {
+  mat: 'stone',
   seed: 25,
   parts: [
     part([[66, 80], [134, 80], [170, 226], [30, 226]], '#57534e', { facet: 0.6, rim: '#67e8f9', rimStrength: 0.3 }),

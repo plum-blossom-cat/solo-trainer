@@ -320,7 +320,7 @@ const ARTS: Record<FigureArt, ArtDef> = {
 }
 
 /**
- * Low-poly renders in src/art/images/<art>.png (made by scripts/generate-art.mjs)
+ * Rendered images in src/art/images/<art>.png (made by scripts/generate-art.mjs)
  * replace the matching silhouette automatically.
  */
 const IMAGES: Partial<Record<FigureArt, string>> = Object.fromEntries(
